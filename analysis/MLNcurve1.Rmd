@@ -1,0 +1,796 @@
+---
+title: "Ncurve Machine Learning"
+author: "Yusuf"
+date: "2024-07-05"
+output:
+  html_document: 
+    css: ../style/content.css
+    theme: readable
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+fontsize: 12pt
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, tidy=FALSE, prompt = TRUE, comment = NA, warning=FALSE, message=FALSE, collapse = TRUE,  class.source='bg-info', class.output='bg-info', tidy.opts=list(width.cutoff=70))
+```
+
+
+```{r}
+rm(list = ls())
+
+# Loading required packages
+
+library(tidyverse)
+library(plotly)
+library(GGally)
+library(caret)
+library(caretEnsemble)
+library(corrplot)
+library(rattle)
+library(ggrepel)
+library(recipes)
+library(skimr)
+library(xgboost)
+library(ggthemes)
+library(mlbench)
+library(MLmetrics) 
+library(klaR)
+library(reticulate)
+library(caretEnsemble)
+#library(keras)
+#library(tensorflow)
+library(tidymodels)
+library(janitor)
+# library(desplot)
+# library(StageWise)
+library(tictoc)
+library(doParallel)
+```
+
+
+
+#Starting out with machine learning for individual stages for both Fm and Chips
+```{r}
+#load stage 1 (canopy cover 50%)
+load("../data/spectcanopy50BLUEsfm.rdata")#fresh market
+load("../data/spectcanopy50BLUEsch.rdata")#chips
+stage1 <- rbind(fm_canopy50_blues, ch_canopy50_blues) %>% 
+  unite(env.id,c(env,id),sep = ":")
+#load other stages (1-5)
+load("../data/fm_spectSenesce1BLUEs.rdata")
+load("../data/ch_spectSenesce1BLUEs.rdata")
+stage5 <- rbind(fm_senescence1_blues, ch_senescence1_blues) %>% 
+  mutate(tpn=stage1$tpn) %>% 
+  unite(env.id,c(env,id),sep = ":")
+
+#load other stages (1-5)
+load("../data/msspecFMdatablues1.5.rda")#fresh market
+fm1 <- msncdata1.5
+load("../data/fm_spectSenesce1BLUEs.rdata")#chips
+ch1 <- msncdata1.5
+stage6 <- rbind(fm1, ch1) %>% 
+  dplyr::select(1,8,12:76)
+```
+
+initial splitting of dataset
+```{r}
+# spliting training set and testing set into 75% and 25% respectively with initial_split from resample package 
+set.seed(1234)
+data_splitc <- initial_split(stage6, prop = 3/4)
+data_splitc
+```
+
+splitting data into training and testing
+```{r}
+d_train <- training(data_splitc)
+d_test <- testing(data_splitc)
+```
+
+
+```{r}
+#specifying dependent and predictor variable
+data_recipe <- 
+  recipe(tpn ~., data = stage6[,c(2:67)]) %>% #for combined stages
+  #recipe(tpn ~., data = stage5[,c(2:15)]) %>% # for other stages
+  #update_role(env.id, new_role = "env.id") %>%
+  step_normalize(all_predictors()) %>%
+  step_impute_mean(all_predictors()) %>% 
+  step_center(all_numeric_predictors()) %>% 
+  step_scale(all_numeric_predictors()) %>% 
+  step_nzv(all_predictors()) 
+```
+
+
+```{r}
+prepare<- prep(data_recipe, d_train)
+```
+
+
+```{r}
+clean_d_train <- bake(prepare, d_train)
+clean_d_test <- bake(prepare, d_test)
+```
+
+
+
+```{r}
+trControl <- trainControl(method = 'repeatedcv', 
+                          savePredictions = T,
+                          repeats = 5,
+                          index = createFolds(clean_d_train$tpn, k=10, returnTrain = T),
+                          search='grid') # 'random' or 'grid'
+                          
+
+```
+
+
+
+```{r}
+set.seed(1234)
+#lm
+fit_lm <- train(tpn ~ .,
+                 data = clean_d_train,
+                 method = 'lm',
+                 metric = 'RMSE',
+                 trControl = trControl)
+
+#glmnet
+fit_glmnet <- train(tpn ~ .,
+                 data = clean_d_train,
+                 metric = 'RMSE',
+                 method = 'glmnet', 
+                 trControl = trControl)
+
+#Random forest
+fit_rf <- train(tpn ~ .,
+                 data = clean_d_train,
+                 method = 'rf',
+                 metric = 'RMSE',
+                 trControl = trControl)
+
+#cubist
+fit_cub <- train(tpn ~ .,
+                 data = clean_d_train,
+                 metric = 'RMSE',
+                 method = 'cubist', #rpart before
+                 trControl = trControl)
+
+# #svm
+# fit_svmr <- train(tpn ~ .,
+#                  data = clean_d_train,
+#                  metric = 'RMSE',
+#                  method = 'svmLinear2', 
+#                  trControl = trControl)
+# #knn
+# fit_knn <- train(tpn ~ .,
+#                  data = clean_d_train,
+#                  metric = 'RMSE',
+#                  method = 'knn', 
+#                  trControl = trControl)
+```
+
+
+```{r}
+fit_lm$pred  %>% 
+  ggplot(aes(x=pred,y=obs)) +
+    geom_point(shape=1) + 
+    geom_abline(slope=1, colour='blue')  +
+    coord_obs_pred()
+```
+
+
+
+Inspecting accuracy meterics for the models
+```{r}
+model.default <- resamples(list(lm= fit_lm, glmnet = fit_glmnet,  RF=fit_rf, cub = fit_cub))#, cubist = fit_cub, k_nn = fit_knn))
+model.default$values
+```
+
+plotting eac metrics accuracy
+```{r}
+bwplot(model.default, layout = c(3,1))
+```
+
+```{r}
+impt1 <- ggplot(varImp(fit_lm)) +
+   xlab(NULL) + ylab(NULL) + facet_grid(~paste("linear regression"))
+
+impt2 <- ggplot(varImp(fit_glmnet)) +
+  facet_grid(~paste("elastic net")) + xlab(NULL) + ylab(NULL)
+
+impt3 <- ggplot(varImp(fit_rf)) +
+  facet_grid(~paste("random forest")) + xlab(NULL) + ylab(NULL)
+
+impt4 <- ggplot(varImp(fit_cub, scale = FALSE)) +
+  facet_grid(~paste("cubist")) + xlab(NULL) + ylab(NULL)
+
+t <- ggpubr::ggarrange(impt1,impt2, impt3, impt4, ncol=2, nrow=2)
+png("../output/featSel_stage6.png", width=16,height=8,units="in",res=150)
+ggpubr::annotate_figure(t, left = ggpubr::text_grob("Feature varibles", rot = 90, size=16), bottom= ggpubr::text_grob("Importance %",  size=16), fig.lab = "Combined Stage",fig.lab.face = "bold",fig.lab.size = 16)
+dev.off()
+```
+```{r}
+imp_feat <- varImp(fit_svmr)
+
+ggplot(imp_feat) +
+  ggtitle("Variable Importances")
+```
+
+```{r}
+modelLookup('glmnet')
+rf_grid = expand.grid(.mtry = c(3, 4,5, 6,7))
+glmnet_grid = expand.grid(alpha = c(0, 0.2, 0.6, 0.9, 1.0), lambda = seq(0.007, 0.1, by = 0.001))
+svmr_grid = expand.grid(C = c(0.25, 0.5, 1, 2, 5, 10), sigma =c(0.0061110851))
+knn_grid = expand.grid(k=seq(1,9, by=1))
+dt_grid =expand.grid(cp=seq(0.25,1, by=0.1))
+
+adap_control <- trainControl(method = "adaptive_cv",
+                            		      number = 10,
+                             		      repeats = 5,
+                             		      adaptive = list(min = 3,     # minimum number of resamples before elimination is possible
+                                              		 	      alpha = 0.05,     # confidence level used to eliminate hyperparameter combos
+                                              			      method = "gls",  
+                                              		              complete = TRUE)) # tells caret to run all the resamples for the best parameter combo
+
+```
+
+
+```{r}
+set.seed(1234)
+fit_rf.t <- train(nup ~ .,
+                 data = clean_d_train,
+                 method = 'rf',
+                 metric = 'RMSE',
+                 #tuneGrid = rf_grid,
+                 tuneLength=25,
+                 trControl = trControl)
+
+fit_glmnet.t <- train(nup ~ .,
+                 data = clean_d_train,
+                 metric = 'RMSE',
+                 method = 'glmnet',
+                 tuneGrid = glmnet_grid,
+                 trControl = trControl,
+                 tuneLength = 25)
+                  
+          
+fit_svmr.t <- train(nup ~ .,
+                 data = clean_d_train,
+                 metric = 'RMSE',
+                 method = 'svmRadial',
+                 #tuneGrid = svmr_grid,
+                 trControl = trControl)
+
+# fit_dt.t <- train(yield ~ .,
+#                  data = clean_d_train,
+#                  metric = 'RMSE',
+#                  method = 'rpart',
+#                  #tuneGrid = dt_grid,
+#                  trControl = trControl)
+
+fit_knn.t <- train(yield ~ .,
+                 data = clean_d_train,
+                 metric = 'RMSE',
+                 method = 'knn', 
+                 #tuneGrid = knn_grid,
+                 trControl = trControl)
+
+## Needs lineout=T to be linear
+# basic_nn <- train(yield ~ .,
+#                  	data = clean_d_train, 
+#                   method = "nnet",
+#                   linout = T,        # this is required to tell caret it's a linear prediction
+#                   trControl = adap_control,
+#                   na.action = na.omit,
+#                   tuneLength=25)
+getTrainPerf(basic_nn) 
+```
+
+```{r}
+# Get the hyperparameters of the best model
+fit_glmnet.t$bestTune
+
+# Can plot how the assessment metric varies for different hyperparameters
+ggplot(fit_glmnet.t) # plots RMSE by default
+ggplot(fit_glmnet.t, metric="MAE") # specify we want MAE plotting
+
+getTrainPerf(fit_glmnet.t)
+
+# Plot the MAE for each resample
+ggplot(as_tibble(fit_glmnet$resample), aes(x="model", y=MAE)) + 
+  geom_boxplot() + 
+  geom_point(shape=1, colour='blue')
+
+# VarImp is still the same
+varImp(fit_glmnet.t)
+```
+
+```{r}
+glmnet_manual_pick <- 
+    update(fit_glmnet, param = list(alpha=1, lambda = 0.0009108197))
+glmnet_manual_pick
+```
+
+```{r}
+model.tuned <- resamples(list(RF=fit_rf.t, glmnet = fit_glmnet.t, SVM = fit_svmr.t, decision_trees = fit_dt.t,
+                                 k_nn = fit_knn.t  
+                                 )) 
+model.tuned$values
+```
+
+
+```{r}
+bwplot(model.tuned, layout = c(3,1))
+```
+
+Using ensemble
+```{r}
+# We'll use adaptive resampling to perform a large, random grid search
+ensem_control <- 
+  trainControl( method = "cv",
+                	number = 5,
+                	repeats = 5,
+                # 	adaptive = list(min = 5, 
+                #                 		alpha = 0.05,
+                #                 		method = "gls", 
+                #                 		complete = TRUE),
+                	search = "random",       # perform random hyperparameter search
+                	savePredictions="final") # this is needed so we can ensemble later
+```
+
+
+caretList: combines each of the models' predictions as the input variables into a new model i.e. the super learner takes as input features the predictions from the previous models. Therefore if the predictions are all strongly correlated we might want to leave some out or stack them using an algorithm that doesn't mind correlated features.
+```{r}
+
+cl <- makePSOCKcluster(10)
+registerDoParallel(cl)
+getDoParWorkers()
+
+# Can call caret list very much like how we call train() except we pass it multiple algorithms to run 
+tic()
+all_in_one <-
+caretList(tpn ~ .,
+            data = clean_d_train,
+            	 trControl=ensem_control,
+            	 metric = "MAE",
+            	 tuneLength = 25,
+            	 methodList=c("lm", "glmnet","rf", "cubist"))#, "xgbTree", "ranger","svmLinear"))
+               # tuneList=list(  glmnet  = caretModelSpec(method="glmnet",  tuneLength=50), 
+               #              	 cubist  = caretModelSpec(method="cubist",  tuneLength=10), 
+               #                 svmL    = caretModelSpec(method="lm",  tuneLength=10),     
+               #            		 xgbTree = caretModelSpec(method="rf", tuneLength=50))) 
+                          		 
+                          		
+             
+          
+                              
+
+toc()
+stopCluster(cl)
+registerDoSEQ() # ends parallel processing
+  
+# Have a look at the models
+rbind(getTrainPerf(all_in_one$"lm"),
+      getTrainPerf(all_in_one$"rf"),
+      getTrainPerf(all_in_one$"glmnet"),
+      getTrainPerf(all_in_one$"cubist")
+      ) %>% 
+  arrange(TrainMAE)
+
+# Plot the results
+bwplot(resamples(all_in_one))
+```
+
+
+# correlation
+```{r}
+# Have a look at the correlation amongst the models
+modelCor(resamples(all_in_one))
+
+# Add on average correlation amongst models
+cor_mat <- rbind(as_tibble(modelCor(resamples(all_in_one)), rownames="models"),
+	  summarise_all(as_tibble(modelCor(resamples(all_in_one))), mean) %>% 
+        	mutate(models="average") %>% 
+        	dplyr::select(models, everything()))
+
+
+#library(reshape2)
+
+# Create the correlation matrix as a dataframe
+cor_matrix <- cor_mat[c(1:4),] %>%
+  remove_rownames() %>% 
+  column_to_rownames("models") %>%  
+  as.matrix()
+  
+# Define model names
+colnames(cor_matrix) <- c("RR", "ENR", "RFR", "RCL")
+rownames(cor_matrix) <- c("RR", "ENR", "RFR", "RCL")
+# Melt the matrix for ggplot2
+cor_df <- melt(cor_matrix)
+
+# Create the heatmap plot
+ggplot(cor_df, aes(Var1, Var2, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0.89, limit = c(0.7, 1), space = "Lab", 
+                       name="Correlation") +
+  geom_text(aes(label = round(value, 3)), color = "black", size = 4) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                   size = 12, hjust = 1)) #+
+  #labs(title = "Correlation Matrix of Model Predictions", x = "", y = "")
+ggsave("../output/stage6_MLpredAllmodels.png",height=8, width=8, units="in", dpi=300) 
+
+```
+
+ ensemble
+```{r}
+# Caret ensemble will ensemble all models in your list
+all_models_ensemble <- caretEnsemble(all_in_one, metric="Rsquared")
+all_models_ensemble # print the performance of the stack
+
+summary(all_models_ensemble) 
+```
+
+
+```{r}
+# Initiate parallel processing
+cl <- makePSOCKcluster(10)
+registerDoParallel(cl)
+getDoParWorkers()
+tic()
+
+# Create the trainControl - don't reuse the one from the model training
+stackControl <- 
+  trainControl( method = "adaptive_cv",
+               	number = 10,
+               	repeats = 5,
+               	adaptive = list(min = 5, 
+                               		alpha = 0.05,
+                               		method = "gls", 
+                               		complete = TRUE),
+  			search = "random",  
+               	savePredictions="final") 
+
+# Ensemble the predictions of `models` to form a new combined prediction based on glm
+set.seed(12345)
+stack_glmnet <- 
+  caretStack(  all_in_one,  # caretList
+             		method="glmnet",   # algorithm to try for our super learner
+             		metric="MAE", 
+             		tuneLength=50, 
+             		trControl=stackControl)
+
+
+set.seed(12345)
+stack_cubist <- 
+  caretStack(  all_in_one, 
+             		method = "cubist", 
+             		metric = "MAE", 
+             		tuneLength=10, 
+             		trControl = stackControl)
+
+
+toc()
+stopCluster(cl)
+registerDoSEQ() # ends parallel processing
+
+stack_glmnet
+stack_cubist
+```
+
+
+```{r}
+# Which model performed the best?
+as_tibble(rbind(glmnet=getTrainPerf(all_in_one$"glmnet")$TrainMAE,
+    			lm=getTrainPerf(all_in_one$"lm")$TrainMAE,            	
+    			cubist=getTrainPerf(all_in_one$"cubist")$TrainMAE,
+                	rf=getTrainPerf(all_in_one$"rf")$TrainMAE,
+                	ensemble=all_models_ensemble$error$MAE,
+                	glmnet_stack=mean(stack_glmnet$ens_model$resample$MAE),
+                	stack_cubist=mean(stack_cubist$ens_model$resample$MAE)), rownames="models") %>% 
+  rename(MAE=V1) %>% 
+  arrange(MAE)
+```
+
+
+# Obtain r2 values
+```{r}
+#comb_tab <- NULL
+load("../output/combTabPred.rda")
+
+comb_tab <- rbind(comb_tab,data.frame(ml_r2=model.default$values$`lm~Rsquared`, algorithm=paste("RR"), gs=paste("stage6"))) %>%
+            rbind(data.frame(ml_r2=model.default$values$`glmnet~Rsquared`, algorithm=paste("ENR"),gs=paste("stage6"))) %>% 
+            rbind(data.frame(ml_r2=model.default$values$`RF~Rsquared`, algorithm=paste("RFR"),gs=paste("stage6"))) %>%
+            rbind(data.frame(ml_r2=model.default$values$`cub~Rsquared`, algorithm=paste("RCL"),gs=paste("stage6"))) 
+
+save(comb_tab, file="../output/combTabPred.rda")
+write.csv(comb_tab,"../output/MLcom_tabPrediction.csv",quote = F, row.names = F)  
+```
+
+```{r}
+rmet <- comb_tab%>% 
+    mutate( stage=factor(gs,levels = c("stage1","stage2","stage3","stage4","stage5", "stage6"),labels = c("stage1","stage2","stage3","stage4","stage5", "combined stages")),
+          model = factor(algorithm, levels = unique(algorithm))) %>%
+  ggplot(aes(x = model, y = ml_r2, fill = model)) +
+  geom_boxplot( stat = "boxplot",  outlier.colour = "red", outlier.shape = 16,
+                outlier.size = 0.5, na.rm=TRUE) +
+  labs(x= bquote("Machine learning models"), y= "Prediction Ability") + theme_bw() + facet_grid( ~ stage) +
+  theme(axis.text = element_text(face = "bold",size = 16), axis.title = element_text(face = "bold", size=18), legend.title = element_text(face = "bold", size=16),legend.text = element_text(face = "bold", size=16), strip.text = element_text(size=16,face="bold"),, panel.border = element_rect(color = "black", fill = NA, size = 1),  # Adds the box around each facet
+    panel.background = element_rect(fill = "white", color = NA),plot.background = element_rect(fill = "white", color = NA))
+#G1.cor <- rbind(modelG1$yield$cval,modelG1$sg$cval,modelG1$roundness$cval)
+ggsave("../output/MLallstagemodelsfm.png",height=10.5, width=18.5, units="in", dpi=300)
+```
+
+
+
+
+intrinsic and separate sample feature selection
+```{r}
+# We'll use the best performing model to select and score up our Test set
+
+repeatedcv <- trainControl(method = "repeatedcv", # what method of resampling we want to use
+                           		   number = 10, # 10 folds
+                           		   repeats = 10) 
+# Split off some data from Train just to run feature selection on
+features_indices <- createDataPartition(clean_d_train$tpn, p=0.2, list=FALSE)
+features_sample  <- clean_d_train[features_indices, ]
+rest_of_train    <- clean_d_train[-features_indices, ]
+
+# Train a model on the sample
+feature_select <-
+  train(tpn ~ . , 
+          data = features_sample, 
+          method = "cubist",
+          trControl = repeatedcv,
+          metric = "Rsquared",
+          tuneLength=10)
+feature_select
+ggplot(varImp(feature_select))
+
+# Keep any features with an importance of 5+
+imp_vars <- 
+  as_tibble(varImp(feature_select)$importance, rownames='variables') %>% 
+  arrange(desc(Overall)) %>% 
+  filter(Overall>=5) %>% 
+  pull(variables)
+imp_vars
+
+# Train a new model with just those features on Train-minus-sample
+glmnet_sample_select <- 
+  train(tpn ~ . , 
+          data = rest_of_train %>% dplyr::select(tpn, all_of(imp_vars)), 
+          method = "cubist",
+          trControl = repeatedcv,
+          metric = "MAE",
+          tuneLength=5)
+
+# Compare Train vs Test
+tibble(Train = getTrainPerf(glmnet_sample_select)$TrainRsquared, 
+          Test  = postResample(pred = cbind(clean_d_test, pred=predict(glmnet_sample_select, clean_d_test))$pred,  
+                                              obs =  cbind(clean_d_test, pred=predict(glmnet_sample_select, clean_d_test))$tpn)[["Rsquared"]],
+          Model = paste0(glmnet_sample_select$method, " sample"))
+```
+
+
+```{r}
+# We'll use the best performing model to score up our Test set
+final_model <- stack_cubist
+
+# Add 
+scoring_data <- clean_d_test 
+
+# Predict on the test set
+scoring_data <- cbind(scoring_data, 
+				     pred=predict(final_model, scoring_data, na.action = na.pass)) # merge on predictions
+
+# Compare performance on the Test set vs the resamples
+tibble(train = mean(stack_glmnet$ens_model$resample$MAE), 
+       test  = postResample(pred = scoring_data$pred, obs = scoring_data$yield)["MAE"]) %>%
+  mutate(difference=train-test)
+```
+
+```{r}
+#Plot actuals vs predictions
+scoring_data %>% 
+  ggplot(aes(x=pred, y=yield)) + 
+  geom_point(shape=1)+ 
+  geom_abline(slope=1, colour='blue') +
+  coord_obs_pred() + 
+  ggtitle("Actuals vs Predictions on Test") + 
+  theme(text = element_text(size=20))
+```
+
+Feature selection using SBF
+```{r}
+#library(gam)
+# Repeated cross fold validation (can do regular k-fold by setting repeats to 1)
+repeatedcv <- trainControl(method = "repeatedcv", # what method of resampling we want to use
+                           		   number = 10, # 10 folds
+                           		   repeats = 5) # repeated ten times
+
+
+sbf_glmnet <- sbf( yield ~ .,
+                data = clean_d_train,
+                  trControl = repeatedcv, # this time we do specify an internal resampling scheme
+                  method = "glmnet", # and a method
+                  metric = "MAE", 
+                  tuneLength=5,
+                  sbfControl = sbfControl(functions = caretSBF, 
+                                          method = 'repeatedcv', 
+                                          number = 5,
+                                          repeats = 5))
+
+sf <- sbf_glmnet$variables$selectedVars
+
+imp_vars <- 
+  as_tibble(varImp(sbf_glmnet)$importance, rownames='variables') %>% 
+  arrange(desc(Overall)) %>% 
+  filter(Overall>=5) %>% 
+  pull(variables)
+imp_vars
+```
+
+```{r}
+# Compare the models on Train and Test (switched to a function as harder to extract the names)
+output <- NULL
+comp_test_train <-function(model, name){
+tibble(Train = model$results$MAE, # note the change in syntax slightly to access results
+          Test  = postResample(pred = cbind(clean_d_test, pred=predict(model, clean_d_test))$pred,  
+                           		      obs =  cbind(clean_d_test, pred=predict(model, clean_d_test))$yield)[["MAE"]],
+          Model=name)
+}
+#output<-rbind(comp_test_train(sbf_rf, 'SBF RF'), output)
+output<-rbind(comp_test_train(sbf_glmnet, 'SBF GLMNET'), output)
+output
+```
+
+Recursive feature selection method
+```{r}
+myFuncs <- caretFuncs # create copy of caret funcs then overwrite
+myPickSizeTolerance <- function(x, metric="RMSE", tol=10, maximize=F) {
+  return(caret::pickSizeTolerance(x, metric, tol, maximize))
+}
+myFuncs$selectSize <- myPickSizeTolerance # overwrite caret tolerance with mine
+
+# Initiate parallel processing
+cl <- makePSOCKcluster(10)
+registerDoParallel(cl)
+getDoParWorkers()
+tic()
+
+# Let's run our own model with RFE
+rfe_glmnet <- 
+  rfe(yield ~ .,
+      data = clean_d_train,
+        trControl = repeatedcv,
+        method = "glmnet", 
+        metric = "MAE", 
+        tuneLength=5,
+        sizes = c(5, 10, 20), # tell caret how many different feature subset sizes to try
+        rfeControl = rfeControl(  method = "repeatedcv",
+                              			repeats = 5, 
+                              			number = 5,
+                              			functions = myFuncs))
+
+rfe_glmnet   # Have a look at the output
+re <- rfe_glmnet$optVariables   # What features got picked?
+names(clean_d_train)[!names(clean_d_train) %in% rfe_glmnet$optVariables] # What variables didn't get picked
+
+
+# Compare the performance vs the Test set
+cbind(rfe_glmnet$results %>% 
+          filter(Variables==rfe_glmnet$bestSubset) %>% 
+          mutate(Model='RFE GLMNET') %>% 
+          dplyr::select(Model, MAE) %>% 
+          dplyr::rename(Train=MAE),
+          Test  = postResample(pred = cbind(clean_d_test, pred=predict(rfe_glmnet, clean_d_test))$pred,  
+                           		      obs =  cbind(clean_d_test, pred=predict(rfe_glmnet, clean_d_test))$yield)[["MAE"]])
+
+toc()
+stopCluster(cl)
+registerDoSEQ()
+
+```
+
+Simulated Annealing Feature Selection
+```{r}
+# Can't use the formula interface for this one
+x <- clean_d_train %>% dplyr::select(-yield) # data set of input features
+y <- clean_d_train$yield # vector of target values (hence the $price_log)
+
+# Run SA with any caret object
+cl <- makePSOCKcluster(20)
+registerDoParallel(cl)
+getDoParWorkers()
+tic()
+
+sa_glmnet <- 
+  safs( x = x, 
+  	   y = y,
+  	   trControl = repeatedcv,
+  	   method = "glmnet", 
+  	   metric = "MAE", 
+  	   tuneLength=5,
+  	   safsControl = safsControl(  functions = caretSA,
+                            	   			method = "repeatedcv",
+                                            		metric = c(internal="MAE", external="MAE"), # tell caret which assessment metric to use
+                            	  			number=5, 
+                            	   			repeats = 5, 
+                            	   			improve = 20), # after how many iterations should it restart if no improvement is seen
+     	    iters = 50) # tell caret how many iterations to run SA for
+
+sa_glmnet # how does the model peform?
+
+sa <- sa_glmnet$optVariables # which variables were picked?
+
+toc()
+stopCluster(cl)
+registerDoSEQ()
+```
+
+
+
+```{r}
+# Compare the models on Train and Test 
+cbind(sa_glmnet$averages %>% 
+        filter(Iter==sa_glmnet$optIter) %>% 
+        mutate(Model='SA GLMNET') %>% 
+        dplyr::select(Model, MAE) %>% 
+        rename(Train=MAE),
+      Test  = postResample(pred = cbind(clean_d_test, pred=predict(sa_glmnet, clean_d_test))$pred,  
+                           obs =  cbind(clean_d_test, pred=predict(sa_glmnet, clean_d_test))$yield)[["MAE"]])
+```
+
+
+
+```{r}
+# The slowest but in theory most powerful
+x_sample <- clean_d_train %>% dplyr::select(-yield)
+y_sample <- clean_d_train$yield
+
+# Implement GA with a lm model
+cl <- makePSOCKcluster(20)
+registerDoParallel(cl)
+getDoParWorkers()
+tic()
+(start.time <- Sys.time())
+ga_lm <- 
+  gafs( x = x_sample, 
+           y = y_sample,
+           trControl = repeatedcv,
+           method = "glmnet", 
+           metric = "MAE", 
+           iters = 50,  # how many generations to run GA for. Normally 200+
+           popSize = 20, # how many random subsets are in each generation. Normally pick 50+
+           gafsControl = gafsControl( functions = caretGA,                      
+                                  			method = "repeatedcv",
+                                            		metric = c(internal="MAE", external="MAE"), # tell caret which assessment metric to use
+                                  			number = 5,
+                                  			repeats = 5,
+                                  			allowParallel = TRUE, 
+                                  			genParallel   = TRUE)) # tells caret to run GA in parallel but can use up lots of memory
+ga_lm
+ga_lm$optVariables # which variables were picked?
+
+toc()
+(end.time <- Sys.time())
+(end.time - start.time)
+stopCluster(cl)
+registerDoSEQ()
+```
+
+
+```{r}
+g <- ga_lm$fit$finalModel$xNames
+save(sa, file = "../output/simAnnel26.rda")
+save(sf, file = "../output/selfil46.rda")
+sa; sf
+```
+

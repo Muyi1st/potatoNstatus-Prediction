@@ -1,0 +1,151 @@
+---
+title: "NcurveRegAnalysis"
+author: "Yusuf"
+date: "2024-11-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+# Load necessary libraries
+library(lme4)     # For mixed-effects model
+library(emmeans)  # For estimated marginal means and comparisons
+
+# Assuming your dataset is called 'data' and has columns: Response, Variety, NitrogenRate, and Replication
+data <- read.csv("../data/chcanopy50.csv", header = T)
+names(data)
+# Convert Variety and NitrogenRate to factors if they are not already
+data$id <- as.factor(data$id)
+data$nlevel <- as.factor(data$nlevel)
+data$rep <- as.factor(data$rep)
+
+# Step 1: Fit the Mixed Model
+model <- lmer(nue ~ id * nlevel + (1|rep), data = data)
+
+# Step 2: Calculate Estimated Marginal Means (EMMs) for Variety-Nitrogen Combinations
+emm_results <- emmeans(model, ~ id | nlevel)
+
+# Step 3: Identify Top-Performing Variety at Each Nitrogen Rate
+# Convert EMMs to a data frame for easy manipulation
+emm_df <- as.data.frame(emm_results)
+
+# For each nitrogen rate, sort varieties by performance and select the top one
+top_varieties <- emm_df %>%
+  group_by(nlevel) %>%
+  top_n(1, wt = emmean)  # Select the variety with the highest mean response for each nitrogen rate
+
+print(top_varieties)
+
+# Optional: Visualize Performance of Varieties Across Nitrogen Rates
+ emm_df %>%
+  mutate(nrate = factor(nlevel, levels = c("1","2","3","4"),
+                        labels= c("0","33","66","100"))) %>%
+ggplot(aes(x = nrate, y = emmean, color = id)) +
+  #geom_boxplot() +
+  geom_jitter() +
+  labs(
+       x = "Nitrogen Rates",
+       y = "NUE Response") +
+  theme_minimal()
+ggsave("../output/NUEClonesfm.png",height=8, width=8, units="in", dpi=300)
+```
+
+
+# N Rates signicance
+```{r}
+
+# Load necessary packages
+library(lme4)     # For mixed-effects model
+library(emmeans)  # For estimated marginal means and post-hoc comparisons
+
+# Assuming your dataset is called 'data' and has columns: Response, Variety, NitrogenRate, and Replication
+# Convert Variety and NitrogenRate to factors if they are not already
+data$id <- as.factor(data$id)
+data$nlevel <- as.factor(data$nlevel)
+data$rep <- as.factor(data$rep)
+
+# Step 1: Fit the Mixed Model
+model <- lmer(nue ~ id + nlevel + id:nlevel + (1|rep), data = data)# linear regression
+y_fixed <- aov(nue ~ id + nlevel + id:nlevel + rep, data = data)# ANOVA
+
+
+# Step 2: Perform ANOVA from lm to Test for Significance of Nitrogen Rates
+anova_results <- anova(model)
+print(anova_results)  # Display ANOVA results for significance of nitrogen rates
+
+# Step 2: OR Perform ANOVA from aov to Test for Significance of Nitrogen Rates
+anova_fixed <- anova(y_fixed)
+anova_fixed
+# Step 3: Post-hoc Test to Separate Means if NitrogenRate is Significant
+# Using estimated marginal means with Tukey adjustment
+emmeans_results <- emmeans(model, pairwise ~ nlevel, adjust = "tukey")
+print(emmeans_results$contrasts)  # Display Tukey's HSD results for mean separation
+
+# Optional: Plot means for visualization
+plot(emmeans_results, comparisons = TRUE)
+
+```
+
+
+
+```{r}
+# Load necessary packages
+library(sommer)  # For GBLUP model
+library(dplyr)   # For data manipulation
+
+# Assuming you have:
+# - 'data' as your phenotypic dataset with columns: Response, Variety, NitrogenRate, and Replication
+# - 'markers' as the marker matrix with rows as varieties and columns as markers
+
+# Step 1: Prepare Phenotypic Data
+data$Variety <- as.factor(data$Variety)
+data$NitrogenRate <- as.factor(data$NitrogenRate)
+data$Replication <- as.factor(data$Replication)
+
+# Step 2: Prepare the Marker Data
+# Make sure that the rows in 'markers' match the varieties in 'data' by their IDs
+# 'markers' should be a matrix with rows = varieties and columns = genetic markers
+rownames(markers) <- levels(data$Variety)  # Set row names to match variety names in data
+
+# Step 3: Calculate the Genomic Relationship Matrix (GRM)
+# GRM is calculated as: G = MM' / m where M is the marker matrix and m is the number of markers
+G_matrix <- A.mat(markers)  # 'A.mat' computes the genomic relationship matrix
+
+# Step 4: Fit the GBLUP Model
+# Fit the model with Variety as a random effect using the GRM for GBLUP
+gblup_model <- mmer(Response ~ NitrogenRate,                # Fixed effect: NitrogenRate
+                    random = ~ vs(Variety, Gu = G_matrix) + (1|Replication), # Random: Variety with G matrix and replication
+                    data = data)
+
+# Step 5: Extract Predicted Breeding Values (BLUPs) for Each Variety
+predicted_values <- ranef(gblup_model)$Variety  # Extract BLUPs for varieties
+blup_df <- as.data.frame(predicted_values) %>% 
+  rename(BLUP = Estimate) %>%
+  rownames_to_column("Variety")
+
+# Step 6: Identify Top-Performing Varieties
+# Join BLUPs with nitrogen rate information to identify top performers at each level
+top_varieties <- data %>%
+  inner_join(blup_df, by = "Variety") %>%
+  group_by(NitrogenRate) %>%
+  top_n(1, wt = BLUP)  # Select the variety with the highest BLUP for each nitrogen rate
+
+print(top_varieties)
+
+# Optional: Visualize Variety Performance by Nitrogen Rate
+library(ggplot2)
+ggplot(blup_df, aes(x = reorder(Variety, -BLUP), y = BLUP, fill = NitrogenRate)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Top Performing Varieties by Nitrogen Rate",
+       x = "Variety",
+       y = "Predicted Breeding Value (BLUP)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+

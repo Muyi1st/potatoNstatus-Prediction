@@ -1,0 +1,473 @@
+---
+title: "NCurve analysis"
+author: "Yusuf"
+date: "2023-02-27"
+output:
+  html_document:
+    css: ../style/content.css
+    theme: readable
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+fontsize: 12pt
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, tidy=FALSE, prompt = TRUE, comment = NA, warning=FALSE, message=FALSE, collapse = TRUE,  class.source='bg-info', class.output='bg-info', tidy.opts=list(width.cutoff=70))
+```
+
+
+## Chips data
+```{r}
+library(tidyverse)
+library(gt)
+library(Hmisc)
+library(lme4)
+```
+
+
+Import spectra data clean up
+```{r}
+nc1 <- read_csv("../data/ncurveFM_all.csv") %>% 
+  mutate(id=accession_name) %>%
+  #arrange(N_level,id,plot) %>% 
+  unite(env.id,c(trial,id,plot),sep = ":") #%>%
+  #select( plot.id, 9:ncol(.))
+
+nc2 <- read_csv("../data/ncurveCh_all.csv") %>% 
+  mutate(id=accession_name) %>%
+  #arrange(N_level,id,plot) %>% 
+  unite(env.id,c(trial,id,plot),sep = ":") #%>%
+  #select( plot.id, 9:ncol(.))
+
+nc3 <- read_csv("../data/ncurveRus_all.csv") %>% 
+  mutate(id=accession_name) %>%
+  #arrange(N_level,id,plot) %>% 
+  unite(env.id,c(trial,id,plot),sep = ":") #%>%
+  #select( plot.id, 9:ncol(.))
+
+#2022 MS
+a1 <- read.csv("../dataDroneI/MultSpec22/2022_CanopyCover50.csv", header = T) %>% mutate(spec_date=paste("22_cover50")) %>% # 22cover50
+  rename(plot=plotNo, id=accession) %>%
+  #filter(trial %in% c("2022_MN_NCRT_Chips","2022_MN_NCRT_FM","2022_MN_NCRT_Rus")) %>% #selecting for NCRT
+  #filter(trial%in%c("2022_MN_NCurve_FM_0","2022_MN_NCurve_FM_33","2022_MN_NCurve_FM_66","2022_MN_NCRT_FM")) %>% #selecting for fresh market
+  #filter(trial%in%c("2022_MN_NCurve_Ch_0","2022_MN_NCurve_Ch_33","2022_MN_NCurve_Ch_66","2022_MN_NCRT_Chips")) %>% #selecting for chips
+  filter(trial%in%c("2022_MN_NCurve_Rus_0","2022_MN_NCurve_Rus_33","2022_MN_NCurve_Rus_66","2022_MN_NCRT_Rus")) %>% #selecting for Rus
+  arrange(trial,plot) %>% 
+  unite(env.id,c(trial,id,plot),sep = ":", remove = F) %>%
+  filter(env.id %in% nc3$env.id)
+  #unite(env.id,c(trial,id,plot),sep = ":", remove = F)
+  #filter(env.id %in% nc1$env.id) %>% 
+  #left_join(nc1, by = c("env.id"))
+ 
+a2 <- read.csv("../dataDroneI/MultSpec22/2022_CanopyCoverFlower.csv", header = T)%>% mutate(spec_date=paste("22_coverflower")) %>% #22coverFlowering
+  rename(plot=plotNo, id=accession) %>%
+  #filter(trial %in% c("2022_MN_NCRT_Chips","2022_MN_NCRT_FM","2022_MN_NCRT_Rus")) %>%
+  #filter(trial%in%c("2022_MN_NCurve_FM_0","2022_MN_NCurve_FM_33","2022_MN_NCurve_FM_66","2022_MN_NCRT_FM")) %>% 
+  #filter(trial%in%c("2022_MN_NCurve_Ch_0","2022_MN_NCurve_Ch_33","2022_MN_NCurve_Ch_66","2022_MN_NCRT_Chips")) %>%
+  filter(trial%in%c("2022_MN_NCurve_Rus_0","2022_MN_NCurve_Rus_33","2022_MN_NCurve_Rus_66","2022_MN_NCRT_Rus")) %>% #selecting for Rus
+  arrange(trial,plot) %>% 
+  unite(env.id,c(trial,id,plot),sep = ":", remove = F) %>%
+  filter(env.id %in% nc3$env.id) 
+  #mutate(id=ifelse(plot==cfr$plot, cfr$id, id)) %>% 
+  #left_join(cfr, by = c("plot","id"))
+
+a3 <- read.csv("../dataDroneI/MultSpec22/2022_peakFlowering.csv", header = T)%>% mutate(spec_date=paste("22_peakFlower")) %>% # 22peakFlower
+  rename(plot=plotNo, id=accession) %>%
+  #filter(trial %in% c("2022_MN_NCRT_Chips","2022_MN_NCRT_FM","2022_MN_NCRT_Rus"))%>% 
+  #filter(trial%in%c("2022_MN_NCurve_FM_0","2022_MN_NCurve_FM_33","2022_MN_NCurve_FM_66","2022_MN_NCRT_FM")) %>% 
+  #filter(trial%in%c("2022_MN_NCurve_Ch_0","2022_MN_NCurve_Ch_33","2022_MN_NCurve_Ch_66","2022_MN_NCRT_Chips")) %>%
+  filter(trial%in%c("2022_MN_NCurve_Rus_0","2022_MN_NCurve_Rus_33","2022_MN_NCurve_Rus_66","2022_MN_NCRT_Rus")) %>% #selecting for Rus
+  arrange(trial,plot) %>% 
+  unite(env.id,c(trial,id,plot),sep = ":", remove = F) %>%
+  filter(env.id %in% nc3$env.id) #chips 
+  #mutate(id=ifelse(plot==cfr$plot, cfr$id, id)) %>% 
+  #left_join(cfr, by = c("plot","id"))
+
+a4 <- read.csv("../dataDroneI/MultSpec22/2022_VineBiomass.csv", header = T)%>% mutate(spec_date=paste("22_vineBiomass")) %>% # 22vineBiomass
+  rename(plot=plotNo, id=accession) %>%
+  #filter(trial %in% c("2022_MN_NCRT_Chips","2022_MN_NCRT_FM","2022_MN_NCRT_Rus")) %>%
+  #filter(trial%in%c("2022_MN_NCurve_FM_0","2022_MN_NCurve_FM_33","2022_MN_NCurve_FM_66","2022_MN_NCRT_FM")) %>% 
+  #filter(trial%in%c("2022_MN_NCurve_Ch_0","2022_MN_NCurve_Ch_33","2022_MN_NCurve_Ch_66","2022_MN_NCRT_Chips")) %>%
+  filter(trial%in%c("2022_MN_NCurve_Rus_0","2022_MN_NCurve_Rus_33","2022_MN_NCurve_Rus_66","2022_MN_NCRT_Rus")) %>% #selecting for Rus
+  arrange(trial,plot) %>% 
+  unite(env.id,c(trial,id,plot),sep = ":", remove = F) %>%
+  filter(env.id %in% nc3$env.id)  
+  #mutate(id=ifelse(plot==cfr$plot, cfr$id, id)) %>% 
+  #left_join(cfr, by = c("plot","id"))
+
+a5 <- read.csv("../dataDroneI/MultSpec22/2022_Senescence1.csv", header = T)%>% mutate(spec_date=paste("22_senesence1")) %>% # 22Senescene
+  rename(plot=plotNo, id=accession) %>%
+  #filter(trial %in% c("2022_MN_NCRT_Chips","2022_MN_NCRT_FM","2022_MN_NCRT_Rus")) %>%
+  #filter(trial%in%c("2022_MN_NCurve_FM_0","2022_MN_NCurve_FM_33","2022_MN_NCurve_FM_66","2022_MN_NCRT_FM")) %>% 
+  #filter(trial%in%c("2022_MN_NCurve_Ch_0","2022_MN_NCurve_Ch_33","2022_MN_NCurve_Ch_66","2022_MN_NCRT_Chips")) %>%
+  filter(trial%in%c("2022_MN_NCurve_Rus_0","2022_MN_NCurve_Rus_33","2022_MN_NCurve_Rus_66","2022_MN_NCRT_Rus")) %>% #selecting for Rus
+  arrange(trial,plot) %>% 
+  unite(env.id,c(trial,id,plot),sep = ":", remove = F) %>%
+  filter(env.id %in% nc3$env.id) 
+  #mutate(id=ifelse(plot==cfr$plot, cfr$id, id)) %>% 
+  #left_join(cfr, by = c("plot","id"))
+
+#Merge all growth stages together
+a_22 <- rbind(a1, a2, a3, a4,a5) %>% 
+  select(2:7, rep, nlevel, spec_date,Red,Green, Blue,NIR,Red_Edge,NDVI,NDRE,GNDVI,GLI,CIRE,CIG,NDWI,TCARI.OSAVI,88:101) %>% 
+  mutate(yield=yield/8.920845288) %>%  #corrected yield data and convert to mg/h
+  rename_all(tolower)
+
+```
+
+
+import spectra data clean up
+```{r}
+#2023 MS
+b1 <- read.csv("../dataDroneI/MultSpec23/2023_CanopyCover50.csv", header = T) %>% mutate(spec_date=paste("23_cover50")) %>% # 22cover50
+  rename(plot=plotNo, id=accession) %>%
+  #filter(trial %in% c("2023_MN_NCRT_Chips","2023_MN_NCRT_FM","2023_MN_NCRT_Rus")) %>% #NCRT subset
+  #filter(trial%in%c("2023_MN_NCurve_FM_0","2023_MN_NCurve_FM_33","2023_MN_NCurve_FM_66","2023_MN_NCRT_FM")) %>% # fresh market subset
+  #filter(trial%in%c("2023_MN_Ncurve_Ch_0","2023_MN_Ncurve_Ch_33","2023_MN_Ncurve_Ch_66","2023_MN_NCRT_Chips")) %>% # chips market subset
+  filter(trial%in%c("2023_MN_Ncurve_Rus_0","2023_MN_Ncurve_Rus_33","2023_MN_Ncurve_Rus_66","2022_MN_NCRT_Rus")) %>% #selecting for Rus
+  arrange(trial,plot) %>% 
+  unite(env.id,c(trial,id,plot),sep = ":", remove = F) %>%
+  filter(env.id %in% nc3$env.id) 
+  #mutate(id=ifelse(plot==cfr$plot, cfr$id, id)) %>% 
+  #left_join(cfr, by = c("plot","id")) 
+ 
+b2 <- read.csv("../dataDroneI/MultSpec23/2023_Canopy coverFlower.csv", header = T)%>% mutate(spec_date=paste("23_coverflower")) %>% #22coverFlowering
+  rename(plot=plotNo, id=accession) %>%
+  #filter(trial %in% c("2023_MN_NCRT_Chips","2023_MN_NCRT_FM","2023_MN_NCRT_Rus")) %>%
+  #filter(trial%in%c("2023_MN_NCurve_FM_0","2023_MN_NCurve_FM_33","2023_MN_NCurve_FM_66","2023_MN_NCRT_FM")) %>% 
+  #filter(trial%in%c("2023_MN_Ncurve_Ch_0","2023_MN_Ncurve_Ch_33","2023_MN_Ncurve_Ch_66","2023_MN_NCRT_Chips")) %>% # chips market subset
+  filter(trial%in%c("2023_MN_Ncurve_Rus_0","2023_MN_Ncurve_Rus_33","2023_MN_Ncurve_Rus_66","2022_MN_NCRT_Rus")) %>% #selecting for Rus
+  arrange(trial,plot) %>% 
+  unite(env.id,c(trial,id,plot),sep = ":", remove = F) %>%
+  filter(env.id %in% nc3$env.id) 
+  #mutate(id=ifelse(plot==cfr$plot, cfr$id, id)) %>% 
+  #left_join(cfr, by = c("plot","id"))
+
+b3 <- read.csv("../dataDroneI/MultSpec23/2023_peakFlowering.csv", header = T)%>% mutate(spec_date=paste("23_peakFlower")) %>% # 22peakFlower
+  rename(plot=plotNo, id=accession) %>%
+  #filter(trial %in% c("2023_MN_NCRT_Chips","2023_MN_NCRT_FM","2023_MN_NCRT_Rus"))%>% 
+  #filter(trial%in%c("2023_MN_NCurve_FM_0","2023_MN_NCurve_FM_33","2023_MN_NCurve_FM_66","2023_MN_NCRT_FM")) %>%
+  #filter(trial%in%c("2023_MN_Ncurve_Ch_0","2023_MN_Ncurve_Ch_33","2023_MN_Ncurve_Ch_66","2023_MN_NCRT_Chips")) %>% # chips market subset
+  filter(trial%in%c("2023_MN_Ncurve_Rus_0","2023_MN_Ncurve_Rus_33","2023_MN_Ncurve_Rus_66","2022_MN_NCRT_Rus")) %>% #selecting for Rus
+  arrange(trial,plot) %>% 
+  unite(env.id,c(trial,id,plot),sep = ":", remove = F) %>%
+  filter(env.id %in% nc3$env.id)
+  #mutate(id=ifelse(plot==cfr$plot, cfr$id, id)) %>% 
+  #left_join(cfr, by = c("plot","id"))
+
+b4 <- read.csv("../dataDroneI/MultSpec23/2023_VineBiomass.csv", header = T)%>% mutate(spec_date=paste("23_vineBiomass")) %>% # 22vineBiomass
+  rename(plot=plotNo, id=accession) %>%
+  #filter(trial %in% c("2023_MN_NCRT_Chips","2023_MN_NCRT_FM","2023_MN_NCRT_Rus")) %>%
+  #filter(trial%in%c("2023_MN_NCurve_FM_0","2023_MN_NCurve_FM_33","2023_MN_NCurve_FM_66","2023_MN_NCRT_FM")) %>% 
+  #filter(trial%in%c("2023_MN_Ncurve_Ch_0","2023_MN_Ncurve_Ch_33","2023_MN_Ncurve_Ch_66","2023_MN_NCRT_Chips")) %>% # chips market subset
+  filter(trial%in%c("2023_MN_Ncurve_Rus_0","2023_MN_Ncurve_Rus_33","2023_MN_Ncurve_Rus_66","2022_MN_NCRT_Rus")) %>% #selecting for Rus
+  arrange(trial,plot) %>% 
+  unite(env.id,c(trial,id,plot),sep = ":", remove = F) %>%
+  filter(env.id %in% nc3$env.id)
+  #mutate(id=ifelse(plot==cfr$plot, cfr$id, id)) %>% 
+  #left_join(cfr, by = c("plot","id"))
+
+b5 <- read.csv("../dataDroneI/MultSpec23/2023_Senescence1.csv", header = T)%>% mutate(spec_date=paste("23_senesence1")) %>% # 22Senescene
+  rename(plot=plotNo, id=accession) %>%
+  #filter(trial %in% c("2023_MN_NCRT_Chips","2023_MN_NCRT_FM","2023_MN_NCRT_Rus")) %>%
+  #filter(trial%in%c("2023_MN_NCurve_FM_0","2023_MN_NCurve_FM_33","2023_MN_NCurve_FM_66","2023_MN_NCRT_FM")) %>%
+  #filter(trial%in%c("2023_MN_Ncurve_Ch_0","2023_MN_Ncurve_Ch_33","2023_MN_Ncurve_Ch_66","2023_MN_NCRT_Chips")) %>% # chips market subset
+  filter(trial%in%c("2023_MN_Ncurve_Rus_0","2023_MN_Ncurve_Rus_33","2023_MN_Ncurve_Rus_66","2022_MN_NCRT_Rus")) %>% #selecting for Rus
+  arrange(trial,plot) %>% 
+  unite(env.id,c(trial,id,plot),sep = ":", remove = F) %>%
+  filter(env.id %in% nc3$env.id)  
+  #mutate(id=ifelse(plot==cfr$plot, cfr$id, id)) %>% 
+  #left_join(cfr, by = c("plot","id"))
+
+b6 <- read.csv("../dataDroneI/MultSpec23/2023_Senescence2.csv", header = T)%>% mutate(spec_date=paste("23_senesence2")) %>% # 22Senescene
+  rename(plot=plotNo, id=accession) %>%
+  #filter(trial %in% c("2023_MN_NCRT_Chips","2023_MN_NCRT_FM","2023_MN_NCRT_Rus")) %>%
+  #filter(trial%in%c("2023_MN_NCurve_FM_0","2023_MN_NCurve_FM_33","2023_MN_NCurve_FM_66","2023_MN_NCRT_FM")) %>% 
+  filter(trial%in%c("2023_MN_NCurve_Ch_0","2023_MN_NCurve_Ch_33","2023_MN_NCurve_Ch_66","2023_MN_NCRT_Chips")) %>% # chips market subset
+  arrange(trial,plot) %>% 
+  unite(env.id,c(trial,id,plot),sep = ":", remove = F) %>%
+  filter(env.id %in% nc2$env.id) 
+
+#Merge all growth stages together
+b_22 <- rbind(b1, b2, b3, b4,b5) %>% 
+  select(2:7, rep, nlevel, spec_date,Red,Green, Blue,NIR,Red_Edge,NDVI,NDRE,GNDVI,GLI,CIRE,CIG,NDWI,TCARI.OSAVI,86:96, 98:102)%>% 
+  mutate(yield=yield/8.920845288) %>%  #corrected yield data and convert to mg/h
+   rename_all(tolower)
+```
+
+
+merge and save both year spec data 
+```{r}
+#All curated spec data and traits stored
+saveRDS(rbind(a_22,b_22),"../data/multiSpecNcurveTrials.rds")
+```
+
+
+separate all market classes and N trials
+```{r}
+#ab_22 <- readRDS("../data/multiSpecNcurveTrials.rds")
+
+#Chips
+a_22c <- a_22 %>% 
+  filter(trial==c("2022_MN_NCurve_Ch_0","2022_MN_NCurve_Ch_33","2022_MN_NCurve_Ch_66","2022_MN_NCRT_Chips"))
+a_23c <- b_22 %>% 
+  filter(trial==c("2023_MN_NCurve_Ch_0","2023_MN_NCurve_Ch_33","2023_MN_NCurve_Ch_66","2023_MN_NCRT_Chips"))
+chips <- rbind(a_22, b_22) %>% 
+  mutate_if(is.character, list(~na_if(.,"")))#replace with NA
+  mutate_at(vars(23:30), as.numeric)
+
+#fresh market
+a_22f <- a_22 %>% 
+  filter(trial%in%c("2022_MN_NCurve_FM_0","2022_MN_NCurve_FM_33","2022_MN_NCurve_FM_66","2022_MN_NCRT_FM")) %>% 
+ mutate_if(is.character, list(~na_if(.,"")))#replace with NA
+a_23f <- b_22 %>% 
+  filter(trial%in%c("2023_MN_NCurve_FM_0","2023_MN_NCurve_FM_33","2023_MN_NCurve_FM_66","2023_MN_NCRT_FM")) %>% 
+  mutate_if(is.character, list(~na_if(.,"")))#replace with NA
+fm <- rbind(a_22f, a_23f) %>% mutate_at(vars(23:30), as.numeric)
+
+#Russet market
+a_22r <- a_22 %>% 
+  filter(trial==c("2022_MN_NCurve_Rus_0","2022_MN_NCurve_Rus_33","2022_MN_NCurve_Rus_66","2022_MN_NCRT_Rus"))
+a_23r <- b_22 %>% 
+  filter(trial==c("2023_MN_NCurve_Rus_0","2023_MN_NCurve_Rus_33","2023_MN_NCurve_Rus_66","2023_MN_NCRT_Rus"))
+rus <- rbind(a_22, b_22) %>% 
+  mutate_if(is.character, list(~na_if(.,"")))
+  mutate_at(vars(23:30), as.numeric)
+```
+
+
+## save all class
+```{r}
+# save chips data
+save(chips, file ="../data/chipsNAllSpectraits.rda")#chips
+save(fm, file = "../data/fmNAllSpectraits.rdata")#FM
+save(rus, file = "../data/rusNAllSpectraits.rdata")#Rus
+```
+
+
+
+```{r}
+#FM NCurve
+fm1 <-  fm %>% 
+  filter(spec_date=="22_cover50" | spec_date=="23_cover50") %>% 
+  mutate(#sg=ifelse(sg<qy2 | sg>qy1,NA, sg),
+                redness=ifelse(redness<0 | redness>33, NA,redness),
+                lightness=ifelse(lightness<0 | lightness>100, NA,lightness),
+                roundness=ifelse(roundness<qr2 | roundness>qr1, NA,roundness),
+                lxw=ifelse(lxw<qw2 | lxw>qw1, NA,lxw)) 
+
+
+for(i in 23:ncol(fm))
+    {
+ 	    meanXi <- mean(fm[,i],na.rm=TRUE)
+        # naive imputation
+	    fm[,i] <- ifelse(is.na(fm[,i]),meanXi, fm[,i]) 
+     }
+
+fm1 <- fm %>%
+  #mutate_if(is.character, as.numeric) %>%
+  mutate_at(vars(23:30), as.numeric) %>%
+  mutate(vinedm=subvinedry/subvinefresh, tuberdm= subtuberdry/subtuberfresh) %>% 
+  mutate(ncontVine=vinedm*nvine, ncontTub=tuberdm*ntuber) %>% 
+  mutate(nup=ncontTub+ncontVine) %>% 
+  select(-vinefresh, -subvinefresh, -subvinedry, -tuberfresh, -subtuberfresh, -subtuberdry)
+
+
+  #filter(spec_date==c("22_cover50","23_cover50")) 
+par(mfrow=c(4,8))
+for(i in 10:34){
+  hist(fm1[,i], xlab = '', col='steelblue',  main=names(fm1[i]))
+}
+par(mfrow=c(3,8))
+Hmisc::hist.data.frame(fm1[,10:34])
+```
+
+
+```{r}
+traits <- c(names(fm1)[c(10:34)])
+mod <- vector("list", length(traits))
+```
+
+
+
+## starting with subset of all the chips and time point
+```{r}
+#chips NCurve
+nc2 <- read_csv("../data/ncurveCh_all.csv") %>% 
+  #mutate(id=accession_name) %>%
+  arrange(N_level,id,plot) %>% 
+  unite(plot.id,c(plot,id),sep = ":") %>%
+  select(year, plot.id, 9:ncol(.))
+
+load("../data/chipsNAllSpectraits.rda") 
+  #mutate(yield=ifelse(trial=="2022_MN_NCRT_Chips",yield22$yield, yield), yield=yield/8.920845288)  #corrected yield data and convert to mg/h
+```
+
+
+```{r}
+
+
+```
+
+
+N use efficiency 
+```{r}
+nc1$nuetvf1 <- nc1$TVFW1/nc1$nvine1
+nc1$nuesvf <- nc1$SVFW2/nc1$nvine2
+nc1$nuesdf <- nc1$SVDW1/nc1$nvine1
+nc1$nuettf <- nc1$TTFW2/nc1$ntuber2
+nc1$nuestf <- nc1$STFW2/nc1$ntuber2
+nc1$nuestd <- nc1$STDW2/nc1$ntuber2 
+```
+
+
+N use uptake
+```{r}
+interaction.plot(nc1$nuettf, nc1$N_level)
+```
+
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+
+```{r}
+hist.data.frame(dat1[,c(11:16)])
+```
+
+
+add row and columns as random factors
+```{r}
+dat1$row <- as.factor(dat1$row)
+dat1$range <- as.factor(dat1$range)
+dat1$rep <- as.factor(dat1$rep)
+dat1$N_level <- as.factor(dat1$N_level)
+```
+
+
+Specify the number of segments for the spatial model
+```{r}
+# nrow <- max(dat1$row)
+# ncol <- max(dat1$range)
+# nseg.row <- nrow/2
+# nseg.col <- ncol/2
+```
+
+
+```{r}
+lm_fixed <- lm(TTFW ~ accession_name + N_level + accession_name * N_level, data=dat1) 
+```
+
+
+```{r}
+dat1 %>% 
+    select(TTFW,N_level,rep) %>% 
+    na.omit %>% 
+    mutate(Pred=predict(lm_fixed)) %>% 
+    ggplot(.,aes(x=N_level,
+                 y=Pred,
+                 fill=N_level)) + 
+    geom_boxplot() +
+    labs(y="Predicted Values of TTFW") +
+    ggtitle('Total Tuber Fresh Weight') +
+    theme_bw()
+```
+
+
+```{r}
+anova_fixed <- anova(lm_fixed)
+```
+
+
+```{r}
+#rownames(anova_fixed) <- c('Clone', 'n_levels', 'rep', 'clone X n_level', "residuals")
+```
+
+
+```{r}
+anova_fixed
+```
+
+
+
+```{r}
+stargazer::stargazer(anova_fixed, 
+         type='text', 
+         title="ANOVA Table", 
+         summary=FALSE,  
+         digits=2,
+         header=FALSE)
+```
+
+
+```{r}
+#clone_lsmeans <- summary(lsmeans(lm_fixed, 'accession_name:N_level'))
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+#lsmeans(lm_fixed,"accession_name")
+```
+
+
+```{r}
+# #library(lsmeans) 
+# mean_con <- lsmeans(lm_fixed, list(pairwise ~ accession_name * N_level))
+# mean_con <- data.frame(summary(mean_con$pairwise))
+# mean_con <- mean_con %>% select(X1, estimate, p.value)
+```
+
+
+```{r}
+# mean_con <- mean_con %>% 
+#             dplyr::rename(Contrast=X1, Estimate=estimate) %>%
+#             select(Contrast, Estimate, p.value) %>% 
+#             mutate(Estimate=round(Estimate, 2), 
+#                  p.value=round(p.value, 2)) %>% 
+#             arrange(-Estimate)  %>% 
+#             head(.) %>% 
+#             data.frame
+```
+
+
+```{r}
+#mean_con
+```
+
+
+
+
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
